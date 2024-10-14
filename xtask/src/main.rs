@@ -228,6 +228,14 @@ trait Task: Sized {
                     use mixtral_cpu::MixtralCPU as M;
                     runtime.block_on(self.typed::<M>(()));
                 }
+                #[cfg(all(detected_cuda, detected_nccl))]
+                distribute => {
+                    use mixtral_nv::{MixtralGPU as M, cuda::Device};
+
+                    let meta = distribute.iter().copied().map(Device::new).collect();
+                    runtime.block_on(self.typed::<M>(meta));
+                }
+                #[cfg(not(all(detected_cuda, detected_nccl)))]
                 _ => panic!("Unsupported device"),
             },
         }

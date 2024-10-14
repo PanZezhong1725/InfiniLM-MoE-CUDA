@@ -21,6 +21,7 @@ llama-nv-distributed = { path = "../models/llama/nvidia-gpu-distributed", option
 llama-cn = { path = "../models/llama/cambricon-mlu", optional = true }
 mixtral = { path = "../models/mixtral/common" }
 mixtral-cpu = { path = "../models/mixtral/cpu" }
+mixtral-nv = { path = "../models/mixtral/nvidia-gpu-distributed", optional = true }
 
 digit-layout.workspace = true
 log.workspace = true
@@ -37,5 +38,5 @@ search-neuware-tools.workspace = true
 
 [features]
 default = ["nvidia", "cambricon"]
-nvidia = ["llama-nv", "llama-nv-distributed"]
+nvidia = ["llama-nv", "llama-nv-distributed", "mixtral-nv"]
 cambricon = ["llama-cn"]

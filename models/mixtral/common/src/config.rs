@@ -4,7 +4,7 @@ use digit_layout::{
     DigitLayout,
 };
 use std::{fs, path::Path};
-
+use tensor::udim;
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct ConfigJson {
     pub bos_token_id: utok,
@@ -50,4 +50,45 @@ const fn default_rms_norm_eps() -> f32 {
 #[inline(always)]
 const fn default_rope_theta() -> f32 {
     1e4
+}
+
+#[derive(Clone, Debug)]
+pub struct MixtralConfig {
+    pub dtype: DigitLayout,
+    pub voc: udim,
+    pub nlayers: udim,
+    pub nh: udim,
+    pub nkvh: udim,
+    pub d: udim,
+    pub dh: udim,
+    pub di: udim,
+    pub ne: udim,
+    pub k: udim,
+    pub max_seq_len: udim,
+    pub bos_token: utok,
+    pub eos_token: utok,
+    pub epsilon: f32,
+    pub theta: f32,
+}
+
+impl MixtralConfig {
+    pub fn new(config: &ConfigJson) -> Self {
+        MixtralConfig {
+            dtype: config.data_layout(),
+            voc: config.vocab_size as udim,
+            nlayers: config.num_hidden_layers as udim,
+            nh: config.num_attention_heads as udim,
+            nkvh: config.num_key_value_heads as udim,
+            d: config.hidden_size as udim,
+            dh: config.hidden_size as udim / config.num_attention_heads as udim,
+            di: config.intermediate_size as udim,
+            max_seq_len: config.max_position_embeddings as udim,
+            bos_token: config.bos_token_id,
+            eos_token: config.eos_token_id,
+            epsilon: config.rms_norm_eps,
+            theta: config.rope_theta,
+            ne: config.num_local_experts as udim,
+            k: config.num_experts_per_tok as udim,
+        }
+    }
 }

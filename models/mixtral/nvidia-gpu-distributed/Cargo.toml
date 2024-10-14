@@ -1,0 +1,26 @@
+[package]
+name = "mixtral-nv"
+version = "0.0.0"
+edition = "2021"
+authors = ["Zezhong Pan <panzezhong@qiyuanlab.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+common = { path = "../../../common" }
+common-nv = { path = "../../../devices/nvidia-gpu" }
+mixtral = { path = "../common" }
+causal-lm = { path = "../../../causal-lm" }
+tensor = { path = "../../../tensor" }
+
+digit-layout.workspace = true
+itertools.workspace = true
+nccl.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+simple_logger = "5.0"
+
+[build-dependencies]
+build-script-cfg.workspace = true
+search-cuda-tools.workspace = true

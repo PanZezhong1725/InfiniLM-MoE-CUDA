@@ -21,6 +21,7 @@ members = [
     "models/llama/cambricon-mlu",
     "models/mixtral/common",
     "models/mixtral/cpu",
+    "models/mixtral/nvidia-gpu-distributed",
 ]
 resolver = "2"
 

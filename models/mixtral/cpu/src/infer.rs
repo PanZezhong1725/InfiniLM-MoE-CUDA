@@ -12,20 +12,20 @@ impl CausalLM for MixtralCPU {
 
     #[inline]
     fn eos_token(&self) -> utok {
-        self.eos_token
+        self.config.eos_token
     }
     #[inline]
     fn max_seq_len(&self) -> upos {
-        self.max_seq_len
+        self.config.max_seq_len
     }
 
     fn new_cache(&self) -> Tensor<Self::Storage> {
-        let dt = self.data_type;
-        let nlayers = self.nlayers;
-        let nkvh = self.nkvh;
-        let max_seq_len = self.max_seq_len;
-        let d = self.d;
-        let nh = self.nh;
+        let dt = self.config.dtype;
+        let nlayers = self.config.nlayers;
+        let nkvh = self.config.nkvh;
+        let max_seq_len = self.config.max_seq_len;
+        let d = self.config.d;
+        let nh = self.config.nh;
         Tensor::alloc(dt, &[nlayers, 2, nkvh, max_seq_len, d / nh], Blob::new)
     }
 
@@ -52,8 +52,8 @@ impl CausalLM for MixtralCPU {
     }
 
     fn token_embed(&self, queries: impl IntoIterator<Item = utok>) -> Tensor<Self::Storage> {
-        let dt = self.data_type;
-        let d = self.d;
+        let dt = self.config.dtype;
+        let d = self.config.d;
 
         let tokens = queries.into_iter().collect::<Vec<_>>();
         let nt = tokens.len() as udim;
@@ -88,13 +88,13 @@ impl CausalLM for MixtralCPU {
             })
             .collect::<Vec<_>>();
 
-        let dt = self.data_type;
-        let d = self.d;
-        let nh = self.nh;
-        let nkvh = self.nkvh;
+        let dt = self.config.dtype;
+        let d = self.config.d;
+        let nh = self.config.nh;
+        let nkvh = self.config.nkvh;
         let dh = d / nh;
         let dkv = nkvh * dh;
-        let di = self.di;
+        let di = self.config.di;
         let head_group = nh / nkvh;
         let head_div = (dh as f32).sqrt().recip();
 
@@ -110,18 +110,18 @@ impl CausalLM for MixtralCPU {
         let mut att_buf = Blob::new((nh * max_seq_len * max_att_len) as usize * dt.nbytes());
         let pos = causal_lm::pos(&queries, nt);
         let pos = pos.as_ref().map_physical(|u| reslice(u));
-        let mut moe_w = tensor(dt, &[nt, self.k]);
-        let mut moe_i = tensor(U32, &[nt, self.k]);
-        let mut routes = tensor(dt, &[nt, self.ne]);
+        let mut moe_w = tensor(dt, &[nt, self.config.k]);
+        let mut moe_i = tensor(U32, &[nt, self.config.k]);
+        let mut routes = tensor(dt, &[nt, self.config.ne]);
 
         let mut x = token_embedded;
-        for layer in 0..self.nlayers {
+        for layer in 0..self.config.nlayers {
             let (mut x1, qkv) = state!();
             let mut qkv = qkv.slice(&[slice![=>], slice![=> d + dkv + dkv]]);
 
             let input_layernorm = self.params.input_layernorm(layer);
             self.kernels
-                .rms_norm(&mut x1, &x, &input_layernorm, self.epsilon, &ThisThread);
+                .rms_norm(&mut x1, &x, &input_layernorm, self.config.epsilon, &ThisThread);
 
             let w_qkv = self.params.w_qkv(layer).transpose(&[1, 0]);
             self.kernels
@@ -133,15 +133,15 @@ impl CausalLM for MixtralCPU {
             let v = v.reshape(&[nt, nkvh, dh]);
             let o = x1.reshape(&[nt, nh, dh]);
 
-            self.kernels.rope(&mut q, &pos, self.theta, &ThisThread);
-            self.kernels.rope(&mut k, &pos, self.theta, &ThisThread);
+            self.kernels.rope(&mut q, &pos, self.config.theta, &ThisThread);
+            self.kernels.rope(&mut k, &pos, self.config.theta, &ThisThread);
 
             let q = q.transpose(&[1, 0, 2]).split(1, &seq_len);
             let k = k.transpose(&[1, 0, 2]).split(1, &seq_len);
             let v = v.transpose(&[1, 0, 2]).split(1, &seq_len);
             let o = o.transpose(&[1, 0, 2]).split(1, &seq_len);
 
-            for (query, q, k, v, mut o) in izip!(&mut queries, q, k, v, o) {
+            for (query, q, k, v, mut o) in izip!(&mut queries, q, k, v, o) {                
                 let pos = query.pos();
                 let seq_len = query.seq_len();
                 let att_len = query.att_len();
@@ -193,13 +193,13 @@ impl CausalLM for MixtralCPU {
 
             let post_layernorm = self.params.post_attention_layernorm(layer);
             self.kernels
-                .rms_norm(&mut x1, &x, &post_layernorm, self.epsilon, &ThisThread);
+                .rms_norm(&mut x1, &x, &post_layernorm, self.config.epsilon, &ThisThread);
 
             let w_moe_gate = self.params.moe_gate(layer).transpose(&[1, 0]);
             self.kernels
                 .mat_mul(&mut routes, 0., &x1, &w_moe_gate, 1., &ThisThread);
-            self.kernels.softmax(&mut routes, &ThisThread);
-            topk(&routes, self.k as _, &mut moe_w, &mut moe_i);
+            softmax(&mut routes);
+            topk(&routes, self.config.k as _, &mut moe_w, &mut moe_i);
             let weights: &[f16] = reslice(moe_w.as_slice());
             let indices: &[u32] = reslice(moe_i.as_slice());
 
@@ -211,15 +211,15 @@ impl CausalLM for MixtralCPU {
             let mut _x1 = x1.split(0, &shard);
             let mut _gate_up = gate_up.split(0, &shard);
             for tok in (0..nt).rev() {
-                let sum: f32 = (0..self.k)
-                    .map(|k| weights[(tok * self.k + k) as usize].to_f32())
+                let sum: f32 = (0..self.config.k)
+                    .map(|k| weights[(tok * self.config.k + k) as usize].to_f32())
                     .sum();
                 let mut gate_up_slice = _gate_up.pop_back().unwrap();
                 let mut x0_slice = _x0.pop_back().unwrap();
                 let x1_slice = _x1.pop_back().unwrap();
-                for k in 0..self.k {
-                    let expert = indices[(tok * self.k + k) as usize];
-                    let expert_w = weights[(tok * self.k + k) as usize].to_f32() / sum;
+                for k in 0..self.config.k {
+                    let expert = indices[(tok * self.config.k + k) as usize];
+                    let expert_w = weights[(tok * self.config.k + k) as usize].to_f32() / sum;
                     let w_gate_up = self.params.mlp_gate_up(layer, expert).transpose(&[1, 0]);
                     self.kernels.mat_mul(
                         &mut gate_up_slice,
@@ -254,8 +254,8 @@ impl CausalLM for MixtralCPU {
         decoding: impl IntoIterator<Item = DecodingMeta>,
         hidden_state: Tensor<Self::Storage>,
     ) -> Tensor<Self::Storage> {
-        let dt = self.data_type;
-        let d = self.d;
+        let dt = self.config.dtype;
+        let d = self.config.d;
 
         let mut x = hidden_state;
         let range = DecodingMeta::select(&mut x, decoding, |dst, src| dst.copy_from_slice(src));
@@ -274,7 +274,7 @@ impl CausalLM for MixtralCPU {
             .as_ref()
             .map_physical(|u| unsafe { from_raw_parts(u.as_ptr(), u.len()) });
         self.kernels
-            .rms_norm(&mut x, &x_, lm_layernorm, self.epsilon, &ThisThread);
+            .rms_norm(&mut x, &x_, lm_layernorm, self.config.epsilon, &ThisThread);
         self.kernels
             .mat_mul(&mut logits, 0., &x, &lm_head, 1., &ThisThread);
 
@@ -338,6 +338,25 @@ fn topk(logits: &Tensor<Blob>, k: usize, weight: &mut Tensor<Blob>, indices: &mu
         for top_i in 0..k {
             weight_slice[(token_i as usize) * k + top_i] = top[top_i].data;
             indices_slice[(token_i as usize) * k + top_i] = top[top_i].idx as u32;
+        }
+    }
+}
+
+fn softmax(logits: &mut Tensor<Blob>) {
+    let n = logits.shape()[0];
+    let dim = logits.shape()[1];
+    let slice: &mut [f16] = reslice_mut(logits.physical_mut());
+    for token_i in 0..n {
+        let line: &mut [f16] = &mut slice[(token_i * dim) as usize..][..dim as usize];
+        let max = line.iter().cloned().fold(f16::NEG_INFINITY, f16::max).to_f32();
+        let mut exp_sum = 0.;
+        for i in 0..dim {
+            let val = (line[i as usize].to_f32() - max).exp();
+            exp_sum += val;
+        }
+        for i in 0..dim {
+            let val = (line[i as usize].to_f32() - max).exp();
+            line[i as usize] = f16::from_f32(val / exp_sum);
         }
     }
 }

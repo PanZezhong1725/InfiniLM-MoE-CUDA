@@ -1,26 +1,13 @@
 mod infer;
 
 use causal_lm::Model;
-use common::{safe_tensors::SafeTensors, utok, FileLoadError};
+use common::{safe_tensors::SafeTensors, FileLoadError};
 use common_cpu::CpuKernels;
-use digit_layout::DigitLayout;
-use mixtral::{ConfigJson, MixtralParams};
+use mixtral::{ConfigJson, MixtralConfig, MixtralParams};
 use std::path::Path;
-use tensor::udim;
 
 pub struct MixtralCPU {
-    eos_token: utok,
-    data_type: DigitLayout,
-    nlayers: udim,
-    nh: udim,
-    nkvh: udim,
-    max_seq_len: udim,
-    d: udim,
-    di: udim,
-    ne: udim,
-    k: udim,
-    epsilon: f32,
-    theta: f32,
+    config: MixtralConfig,
     params: MixtralParams,
 
     kernels: CpuKernels,
@@ -31,22 +18,11 @@ impl Model for MixtralCPU {
     type Meta = ();
 
     fn load(model_dir: impl AsRef<Path>, _: Self::Meta) -> Result<Self, Self::Error> {
-        let config = ConfigJson::load(&model_dir)?;
+        let config_json = ConfigJson::load(&model_dir)?;
+        let config = MixtralConfig::new(&config_json);
         Ok(Self {
-            eos_token: config.eos_token_id,
-            data_type: config.data_layout(),
-            nlayers: config.num_hidden_layers as _,
-            nh: config.num_attention_heads as _,
-            nkvh: config.num_key_value_heads as _,
-            max_seq_len: config.max_position_embeddings as _,
-            d: config.hidden_size as _,
-            di: config.intermediate_size as _,
-            epsilon: config.rms_norm_eps,
-            theta: config.rope_theta,
-            params: MixtralParams::new(&config, SafeTensors::load_from_dir(model_dir)?),
-            ne: config.num_local_experts as _,
-            k: config.num_experts_per_tok as _,
-
+            config,
+            params: MixtralParams::new(&config_json, SafeTensors::load_from_dir(model_dir)?),
             kernels: Default::default(),
         })
     }
